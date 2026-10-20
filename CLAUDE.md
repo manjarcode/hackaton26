@@ -82,5 +82,9 @@ No implementar fases fuera de orden salvo que el usuario lo pida explícitamente
 - Explicar el razonamiento detrás de cada decisión o cambio.
 - Pedir confirmación antes de cambios grandes o destructivos.
 - Preguntar siempre antes de hacer commits o abrir PRs.
-- Repo remoto: `github.mpi-internal.com/manuel-miguel/hackaton26` (privado).
-  Punto "Abierto / a decidir" de PLAN.md ya resuelto.
+- Repo remoto: `github.com/manjarcode/hackaton26` (público). Migrado desde
+  `github.mpi-internal.com/manuel-miguel/hackaton26` porque la GHE de empresa
+  solo tiene runners self-hosted (labels `small`/`medium`/`big` de
+  `adevinta-jobs`) y un repo en namespace personal no tiene acceso a ellos —
+  los jobs se quedaban en `queued` para siempre. GH Pages gratis en cuenta
+  personal sin plan Pro requiere repo público, de ahí la visibilidad.
