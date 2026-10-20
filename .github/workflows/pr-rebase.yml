@@ -1,0 +1,46 @@
+name: Rebase
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: rebase
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rebase:
+    name: Rebase
+    if: >-
+      github.event_name == 'push' ||
+      github.event.label.name == 'automerge' ||
+      github.event.label.name == 'hotfix'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Actualizar PR(s) con main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_NUMBERS="${{ github.event.pull_request.number }}"
+          else
+            PR_NUMBERS=$(gh pr list --repo "$REPO" --base main --state open --json number -q '.[].number')
+          fi
+
+          if [ -z "$PR_NUMBERS" ]; then
+            echo "No hay PRs abiertas que actualizar."
+            exit 0
+          fi
+
+          for pr in $PR_NUMBERS; do
+            echo "Actualizando PR #$pr con main..."
+            gh api -X PUT "repos/$REPO/pulls/$pr/update-branch" \
+              || echo "No se pudo actualizar PR #$pr (puede que ya esté al día o tenga conflictos)."
+          done

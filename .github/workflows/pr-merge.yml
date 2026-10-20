@@ -5,7 +5,12 @@ on:
     types: [labeled]
 
 concurrency:
-  group: monolith-deploy-queue
+  group: >-
+    ${{
+      contains(github.event.pull_request.labels.*.name, 'hotfix')
+      && format('hotfix-{0}', github.event.pull_request.number)
+      || 'monolith-deploy-queue'
+    }}
   cancel-in-progress: false
 
 permissions:
@@ -15,7 +20,7 @@ permissions:
 jobs:
   automerge:
     name: Automerge
-    if: github.event.label.name == 'automerge'
+    if: github.event.label.name == 'automerge' || github.event.label.name == 'hotfix'
     runs-on: ubuntu-latest
     steps:
       - name: Encolar y mergear
