@@ -82,7 +82,5 @@ No implementar fases fuera de orden salvo que el usuario lo pida explícitamente
 - Explicar el razonamiento detrás de cada decisión o cambio.
 - Pedir confirmación antes de cambios grandes o destructivos.
 - Preguntar siempre antes de hacer commits o abrir PRs.
-- Este repo es nuevo y **todavía no es un repositorio git** — antes de
-  cualquier `git init`/commit, confirmar con el usuario nombre y ubicación
-  del repo remoto (personal/org), visibilidad, etc. (ver "Abierto / a
-  decidir" en PLAN.md).
+- Repo remoto: `github.mpi-internal.com/manuel-miguel/hackaton26` (privado).
+  Punto "Abierto / a decidir" de PLAN.md ya resuelto.
