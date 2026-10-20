@@ -1,0 +1,39 @@
+name: Merge
+
+on:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: monolith-deploy-queue
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: Automerge
+    if: github.event.label.name == 'automerge'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Encolar y mergear
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --merge --auto
+
+          for i in $(seq 1 60); do
+            merged=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json merged -q .merged)
+            if [ "$merged" = "true" ]; then
+              echo "PR #$PR_NUMBER mergeada."
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "Timeout esperando el merge de la PR #$PR_NUMBER" >&2
+          exit 1
