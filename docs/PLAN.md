@@ -12,7 +12,7 @@ Doble propósito: sirve de demo técnica del sistema Y la propia app desplegada
 es la página de presentación de la idea (GH Pages).
 
 **Temática:** Matrix. El bot se llama **Morpheus**, el autor del PR es
-**"el elegido"**, confirmar = **pastilla roja**, fallo/revert = **pastilla
+**"el elegido"**, confirmar = **pastilla roja**, fallo = **pastilla
 azul**, el label de prioridad es la llamada **"Operador, necesito una
 salida"**. Mapeo completo en [Flow.md](Flow.md#temática-de-la-demo-matrix) —
 los nombres técnicos (`gate:ok`, `gate:stop`, etc.) no cambian, esto es solo
@@ -31,7 +31,9 @@ el copy de cara al público.
   señal de fallo.
 - Dos modos de timeout configurables: `default-ok` (sin respuesta → se asume
   OK) y `prudente` (sin respuesta → se queda bloqueado/`stop`).
-- Workflow de revert automático.
+- Notificación de fallo: `gate:stop` bloquea la cola y deja constancia
+  explícita de que haría falta un revert manual en el monolito — no se
+  automatiza el revert (ver "Fuera de alcance").
 - Timers configurables (10 min "real", override corto para demo en directo).
 
 **Nice-to-have (si llegamos):**
@@ -51,6 +53,11 @@ el copy de cara al público.
 **Fuera de alcance:**
 - Cualquier integración con infraestructura real de InfoJobs/Adevinta.
 - Autenticación/autorización real — es una demo, estado y permisos simplificados.
+- Workflow de revert automático: en el monolito real (`all-ij--web-empleo`)
+  revertir un despliegue no es trivial (no es un simple rollback de artefacto
+  estático), así que no tiene sentido simularlo en la demo. `gate:stop`
+  bloquea la cola y notifica que haría falta un revert manual — el revert en
+  sí queda fuera.
 
 ## Arquitectura de la app demo
 
@@ -92,23 +99,21 @@ archivo generado por la demo.)
   con el label `hotfix` saltando al frente — no se construye cola propia.
 - **Job `wait-for-validation-window`:** antes de `automerge`, bloquea hasta
   que el gate del despliegue en curso (si existe) pase a `gate:ok`. Si está
-  en `gate:paused`, espera sin disparar revert.
+  en `gate:paused` o `gate:stop`, espera sin avanzar.
 - **Resolución:** la hace el elegido, comentando/etiquetando el Issue (o,
   si existe el bot, respondiendo en Slack):
   - OK → `gate:ok`, libera la cola.
   - Pausa (duración fija o indefinida) → `gate:paused`.
-  - Fallo → `gate:stop`, dispara el revert.
+  - Fallo → `gate:stop`, bloquea la cola y notifica (consola de Actions en la
+    demo; Slack si llega el nice-to-have) que haría falta un revert manual
+    en el monolito — no se dispara ningún revert automático (ver "Fuera de
+    alcance"). Deja la cola bloqueada hasta resolución manual (cerrar el
+    Issue a mano).
 - **Timeout configurable por modo** (input del `workflow_dispatch`, o
   variable de repo):
   - `default-ok`: sin respuesta en N minutos → `gate:ok` automático.
   - `prudente`: sin respuesta en N minutos → se queda bloqueado (no pasa a
     `ok` solo); requiere intervención manual explícita.
-
-## Workflow de revert
-
-Disparado por `gate:stop`: revierte el commit/release anterior en GH Pages y
-notifica (consola de Actions en la demo; Slack si llega el nice-to-have).
-Deja la cola bloqueada hasta resolución manual (cerrar el Issue a mano).
 
 ## Fases de implementación propuestas
 
@@ -117,9 +122,8 @@ Deja la cola bloqueada hasta resolución manual (cerrar el Issue a mano).
 3. `pr-rebase.yml` + `pr-merge.yml` con concurrency group global (cola) + label `hotfix`.
 4. `release-and-deploy.yml` + apertura de Issue-gate asignado al elegido.
 5. Job `wait-for-validation-window`: resolución manual vía Issue (OK/pausa/fallo) + timeout por modo (`default-ok`/`prudente`).
-6. Workflow de revert.
-7. (Nice-to-have) Bot de Slack: notificaciones proactivas de posición en cola + recoger OK/pausa/fallo sin pasar por GitHub.
-8. (Futuro, fuera del MVP) Step LLM leyendo métricas y escribiendo `gate:stop` como freno adicional.
+6. (Nice-to-have) Bot de Slack: notificaciones proactivas de posición en cola + recoger OK/pausa/fallo sin pasar por GitHub.
+7. (Futuro, fuera del MVP) Step LLM leyendo métricas y escribiendo `gate:stop` como freno adicional.
 
 ## Abierto / a decidir
 

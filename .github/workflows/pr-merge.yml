@@ -16,10 +16,95 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
+  wait-for-validation-window:
+    name: Esperar ventana de validación (gate)
+    if: github.event.label.name == 'automerge' || github.event.label.name == 'hotfix'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Esperar a que el gate del despliegue anterior se resuelva
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          IS_HOTFIX: ${{ github.event.label.name == 'hotfix' }}
+          TIMEOUT_MINUTES: ${{ vars.GATE_TIMEOUT_MINUTES || 10 }}
+          TIMEOUT_MODE: ${{ vars.GATE_TIMEOUT_MODE || 'default-ok' }}
+        run: |
+          if [ "$IS_HOTFIX" = "true" ]; then
+            echo "Operador, necesito una salida: PR hotfix, se salta la espera del gate."
+            exit 0
+          fi
+
+          INTERVAL=15
+          MAX_WAIT_SECONDS=$((6 * 60 * 60))
+          ELAPSED=0
+
+          echo "Buscando un gate abierto de un despliegue anterior..."
+          GATE_NUMBER=$(gh issue list --repo "$REPO" --state open --json number,labels \
+            --jq '[.[] | select(any(.labels[]; .name | startswith("gate:")))] | sort_by(.number) | last | .number // empty')
+
+          if [ -z "$GATE_NUMBER" ]; then
+            echo "No hay gate abierto. Se puede continuar."
+            exit 0
+          fi
+
+          echo "Gate abierto: issue #$GATE_NUMBER. Esperando resolución (timeout ${TIMEOUT_MINUTES}min, modo $TIMEOUT_MODE)..."
+
+          while true; do
+            ISSUE=$(gh issue view "$GATE_NUMBER" --repo "$REPO" --json state,labels)
+            STATE=$(echo "$ISSUE" | jq -r '.state')
+
+            if [ "$STATE" = "CLOSED" ]; then
+              echo "Issue #$GATE_NUMBER cerrado. Se asume resuelto, se puede continuar."
+              exit 0
+            fi
+
+            LABEL=$(echo "$ISSUE" | jq -r '[.labels[].name | select(startswith("gate:"))][0] // empty')
+
+            case "$LABEL" in
+              gate:ok)
+                echo "Gate #$GATE_NUMBER en gate:ok (pastilla roja). Cola liberada."
+                exit 0
+                ;;
+              gate:stop)
+                echo "::error::Gate #$GATE_NUMBER en gate:stop (pastilla azul). Cola bloqueada: requiere revert manual en el monolito y resolución explícita del issue antes de continuar."
+                exit 1
+                ;;
+              gate:paused)
+                echo "Gate #$GATE_NUMBER en pausa (bullet time). Esperando a que el elegido lo reanude..."
+                ;;
+              gate:pending|*)
+                if [ "$ELAPSED" -ge "$((TIMEOUT_MINUTES * 60))" ]; then
+                  if [ "$TIMEOUT_MODE" = "default-ok" ]; then
+                    gh issue edit "$GATE_NUMBER" --repo "$REPO" \
+                      --remove-label "gate:pending" --add-label "gate:ok"
+                    gh issue comment "$GATE_NUMBER" --repo "$REPO" \
+                      --body "Timeout de ${TIMEOUT_MINUTES} min alcanzado en modo \`default-ok\` — pastilla roja automática. Cola liberada."
+                    echo "Timeout alcanzado en modo default-ok. Gate forzado a gate:ok."
+                    exit 0
+                  else
+                    echo "Timeout alcanzado en modo prudente (sigue al conejo blanco). Se mantiene bloqueado hasta resolución manual."
+                  fi
+                else
+                  echo "Gate #$GATE_NUMBER aún gate:pending ($ELAPSED/$((TIMEOUT_MINUTES * 60))s)."
+                fi
+                ;;
+            esac
+
+            if [ "$ELAPSED" -ge "$MAX_WAIT_SECONDS" ]; then
+              echo "::error::Más de 6h esperando al gate #$GATE_NUMBER. Abortando el job; relanza el merge cuando se resuelva."
+              exit 1
+            fi
+
+            sleep "$INTERVAL"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
   automerge:
     name: Automerge
+    needs: wait-for-validation-window
     if: github.event.label.name == 'automerge' || github.event.label.name == 'hotfix'
     runs-on: ubuntu-latest
     steps:

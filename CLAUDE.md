@@ -23,8 +23,10 @@ actualizar este CLAUDE.md para reflejarlo, no al revés.
 - Tras cada deploy se abre un **gate** (GitHub Issue con labels
   `gate:pending`/`gate:ok`/`gate:stop`/`gate:paused`) asignado al autor del PR
   desplegado ("el elegido").
-- El elegido resuelve la ventana de validación: OK, pausa, o fallo (dispara
-  revert automático). Timeout configurable: modo `default-ok` o `prudente`.
+- El elegido resuelve la ventana de validación: OK, pausa, o fallo (bloquea
+  la cola y notifica que haría falta un revert manual en el monolito — no
+  hay workflow de revert automático, ver "Fuera de alcance" en PLAN.md).
+  Timeout configurable: modo `default-ok` o `prudente`.
 - El análisis automático de métricas por LLM es **futuro, fuera del MVP** —
   nunca puede dar `gate:ok` ni forzar un merge, solo escribir `gate:stop`
   como freno adicional.
@@ -32,7 +34,7 @@ actualizar este CLAUDE.md para reflejarlo, no al revés.
 ## Temática Matrix (solo copy, no cambia nombres técnicos)
 
 Bot de Slack = **Morpheus**. Autor del PR en su ventana = **Neo / "el
-elegido"**. OK = **pastilla roja**. Fallo/revert = **pastilla azul**. Label
+elegido"**. OK = **pastilla roja**. Fallo = **pastilla azul**. Label
 `hotfix` = **"Operador, necesito una salida"**. Pausa = **Bullet time**. Modo
 `prudente` = **"Sigue al conejo blanco"**. Notificación de cola = **"Despierta,
 Neo..."**.
@@ -48,9 +50,11 @@ presentación y la narrativa de la demo.
   `peaceiris/actions-gh-pages`).
 - **Workflows GHA** (mirror simplificado del monolito real
   `all-ij--web-empleo`): `pr-rebase.yml`, `pr-merge.yml` (cola global vía
-  `concurrency.group: "monolith-deploy-queue"`), `qa-pipeline.yml` (fallo
-  aleatorio para simular pipeline inestable), `release-and-deploy.yml`
-  (deploy + apertura de gate).
+  `concurrency.group: "monolith-deploy-queue"`, incluye el job
+  `wait-for-validation-window`), `qa-pipeline.yml` (fallo aleatorio para
+  simular pipeline inestable), `release-and-deploy.yml` (deploy + apertura
+  de gate), `gate-resolve.yml` (traduce el comentario del elegido —
+  `ok`/`stop`/`pause` — al label del gate).
 - **Estado del gate:** GitHub Issues (no backend propio).
 - **Sin autenticación/autorización real** — es una demo, estado y permisos
   simplificados a propósito.
@@ -62,9 +66,8 @@ presentación y la narrativa de la demo.
 3. `pr-rebase.yml` + `pr-merge.yml` con cola global + label `hotfix`.
 4. `release-and-deploy.yml` + apertura de Issue-gate.
 5. Job `wait-for-validation-window` (resolución manual vía Issue + timeout por modo).
-6. Workflow de revert.
-7. (Nice-to-have) Bot de Slack.
-8. (Futuro, fuera del MVP) Paso LLM de métricas.
+6. (Nice-to-have) Bot de Slack.
+7. (Futuro, fuera del MVP) Paso LLM de métricas.
 
 No implementar fases fuera de orden salvo que el usuario lo pida explícitamente
 — cada fase depende de la anterior para poder probarse.
@@ -73,8 +76,11 @@ No implementar fases fuera de orden salvo que el usuario lo pida explícitamente
 
 - Cualquier integración con infraestructura real de InfoJobs/Adevinta.
 - Autenticación/autorización real.
+- Workflow de revert automático: en el monolito real no es trivial, así que
+  no se simula. `gate:stop` bloquea la cola y notifica, el revert en sí
+  queda fuera.
 - El paso LLM de métricas y el bot de Slack son nice-to-have/futuro, no el
-  MVP — no darles prioridad sobre las fases 1-6.
+  MVP — no darles prioridad sobre las fases 1-5.
 
 ## Preferencias de trabajo (heredadas del perfil global, aplican aquí también)
 

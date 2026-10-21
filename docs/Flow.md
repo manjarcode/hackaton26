@@ -25,7 +25,10 @@ comunicación, no la decisión.
 - **El "elegido" (humano)**: sigue siendo quien decide si su despliegue va
   bien. El bot no sustituye su criterio, solo le avisa sin que tenga que
   estar pendiente de Slack y avisa al siguiente sin que él tenga que hacerlo.
-- **Workflow de revert**: se dispara automáticamente si el gate pasa a `stop`.
+- **Notificación de fallo**: si el gate pasa a `stop`, bloquea la cola y
+  notifica que haría falta un revert manual en el monolito — no hay
+  workflow de revert automático (en el monolito real no es un rollback
+  trivial, así que no se simula).
 
 ## Modos de resolución de la ventana (configurable)
 
@@ -38,8 +41,9 @@ comunicación, no la decisión.
 El elegido puede, en cualquier momento de su ventana:
 - Confirmar OK → libera la cola de inmediato.
 - Pedir una pausa (duración fija o indefinida) → `gate:paused`, la cola se
-  detiene sin disparar revert, hasta que él mismo la reanude.
-- Señalar un fallo → `gate:stop`, dispara el revert.
+  detiene hasta que él mismo la reanude.
+- Señalar un fallo → `gate:stop`, bloquea la cola y notifica que haría
+  falta un revert manual en el monolito.
 
 ## Diagrama de flujo
 
@@ -64,14 +68,13 @@ flowchart TD
     K -- "Timeout, modo default-ok" --> L
     K -- "Timeout, modo prudente" --> M["gate = gate:stop"]
     K -- "Señala fallo" --> M
-    K -- "Pide pausa" --> M2["gate = gate:paused<br/>cola detenida, sin revert"]
+    K -- "Pide pausa" --> M2["gate = gate:paused<br/>cola detenida"]
 
     L --> N["Gate liberado<br/>Slack notifica al siguiente de la cola"]
     N --> B
 
-    M --> O["Workflow de revert automático"]
-    O --> P["Slack: alerta de revert"]
-    P --> Q["Cola bloqueada hasta resolución manual"]
+    M --> O["Slack: alerta de fallo<br/>requiere revert manual en el monolito"]
+    O --> Q["Cola bloqueada hasta resolución manual"]
 
     M2 --> R["El elegido reanuda manualmente<br/>o expira el límite de la pausa"]
     R --> J
@@ -91,7 +94,6 @@ flowchart TD
 | Job `wait-for-validation-window` | Bloquear el siguiente merge mientras el gate esté `pending`/`paused` | Avanzar antes de `gate:ok` |
 | Bot de Slack | Notificar posición en cola, recoger OK/pausa/fallo del elegido, aplicar timeout según el modo configurado | Decidir por el elegido, forzar un merge o un despliegue |
 | El elegido (humano) | Confirmar OK, pausar, o señalar fallo de su propio despliegue | Saltarse la cola sin label `hotfix` |
-| Workflow de revert | Revertir el despliegue cuando `gate:stop` | Ejecutarse si el gate no está en `stop` |
 
 ## Futuro: análisis automático de métricas (LLM)
 
@@ -112,7 +114,7 @@ demo — para que cale el mensaje sin tener que explicar el sistema entero.
 | Bot de Slack | **Morpheus** | Es quien te despierta, te avisa y te hace la pregunta |
 | El autor del PR en su ventana de validación | **Neo / "el elegido"** | Es quien decide, no el sistema |
 | Confirmación OK → `gate:ok`, libera la cola | **Pastilla roja** | Ves la verdad, aceptas que todo va bien, el mundo real (producción) continúa |
-| Señal de fallo → `gate:stop` + revert | **Pastilla azul** | Vuelves a la cama, se olvida que esto pasó — rollback |
+| Señal de fallo → `gate:stop` | **Pastilla azul** | Vuelves a la cama, pero el problema sigue ahí fuera hasta que alguien actúe a mano |
 | Label `hotfix` (salta la cola) | **"Operador, necesito una salida"** | La llamada urgente de extracción inmediata, sin esperar turno |
 | Pausa del elegido → `gate:paused` | **Bullet time** | Todo se congela mientras tú decides |
 | Modo "prudente" (sin timeout automático a `ok`) | **"Sigue al conejo blanco"** | No hay red de seguridad que te salve, tienes que actuar |
