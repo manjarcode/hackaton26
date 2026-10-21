@@ -7,7 +7,7 @@ function App() {
         ventana de validación, sin testigo humano.
       </p>
       <p className="text-green-700 text-xs">
-        PR de prueba: valida wait-for-validation-window + gate-resolve.
+        PR de prueba 2: simula la ventana de bloqueo de la cola.
       </p>
       <span className="text-xs text-green-600 uppercase tracking-widest">
         gate:pending
