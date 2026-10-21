@@ -19,6 +19,7 @@ jobs:
     name: Rebase
     if: >-
       github.event_name == 'push' ||
+      github.event.label.name == 'rebase' ||
       github.event.label.name == 'automerge' ||
       github.event.label.name == 'hotfix'
     runs-on: ubuntu-latest
