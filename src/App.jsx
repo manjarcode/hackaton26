@@ -6,6 +6,9 @@ function App() {
         Gate de validación para subidas al monolito — cola serializada,
         ventana de validación, sin testigo humano.
       </p>
+      <p className="text-green-700 text-xs">
+        PR de prueba: valida wait-for-validation-window + gate-resolve.
+      </p>
       <span className="text-xs text-green-600 uppercase tracking-widest">
         gate:pending
       </span>
