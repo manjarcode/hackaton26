@@ -11,11 +11,24 @@ comunicación, no la decisión.
 
 ## Componentes
 
-- **Cola de merge (GHA `concurrency.group`)**: serializa los merges por orden
-  de activación del label, reutilizando la cola nativa de GitHub Actions.
-  Un label `hotfix` permite saltar al frente de la cola.
-- **Gate de validación**: job intermedio que bloquea el siguiente merge de la
-  cola hasta que la ventana de validación del despliegue anterior se resuelve.
+- **Gatekeeper (`monolith-deploy-queue.yml`)**: workflow aparte, no disparado
+  por eventos de ninguna PR — se despierta por `workflow_dispatch` (cuando
+  se encola una PR o se resuelve un gate) y por `schedule` cada 5 min como
+  red de seguridad. Decide si se puede mergear la siguiente PR de la cola
+  (`hotfix` primero, luego `automerge`, FIFO por número) o si hay que
+  esperar. Al vivir fuera de la PR, esta nunca se queda con un check "en
+  curso" raro — y si el sistema está bloqueado, se ve con claridad en el
+  resumen del último run del gatekeeper (qué gate, qué label, quién es el
+  asignado), en vez de en cada PR en cola.
+- **Gate de validación**: lo que el gatekeeper consulta antes de mergear —
+  si el gate del despliegue anterior no está en `gate:ok`, no deja avanzar
+  nada.
+- **Parada manual (`queue:blocked`)**: si un intento de merge falla, el
+  gatekeeper abre un issue con esta label y falla el job. Mientras esté
+  abierto, ninguna ejecución futura del gatekeeper evalúa ni mergea nada —
+  no hay fallback automático a la siguiente PR. Se coordinan los humanos
+  (alguien mergea a mano lo que esté listo) y se cierra el issue para
+  reanudar la rotación.
 - **Estado del gate**: un GitHub Issue por despliegue, con labels
   `gate:pending` / `gate:ok` / `gate:stop` / `gate:paused`, actualizado vía
   API. Sirve de almacén de estado y de log de auditoría.
@@ -49,15 +62,18 @@ El elegido puede, en cualquier momento de su ventana:
 
 ```mermaid
 flowchart TD
-    A["Usuario activa label 'merge automático'<br/>(label 'hotfix' = prioridad máxima)"] --> B["Cola GHA<br/>(concurrency.group global, hotfix al frente)"]
-    B --> C{"¿Pipeline verde<br/>y rebaseado?"}
-    C -- No --> C1["Bloqueado en cola<br/>Slack: posición en cola"]
-    C1 --> C
-    C -- Sí --> D["Job: wait-for-validation-window<br/>¿hay gate abierto de un despliegue anterior?"]
-    D -- "gate:pending / gate:paused" --> D1["Slack: notifica posición<br/>'quedan N por delante' / 'eres el siguiente'"]
-    D1 --> D
-    D -- "gate:ok o sin gate activo" --> E["automerge<br/>(merge a master)"]
-    E --> F["release-and-deploy.yml<br/>(push a master)"]
+    A["Usuario activa label 'automerge' o 'hotfix'<br/>(hotfix = prioridad en la cola, no bypass)"] --> B1["pr-merge.yml: solo despierta<br/>al gatekeeper (gh workflow run)<br/>— termina ya, PR en verde"]
+    B1 --> C0{"¿Hay issue 'queue:blocked' abierto?"}
+    C0 -- Sí --> C1["Gatekeeper no hace nada<br/>hasta que un humano lo cierre"]
+    C1 -. "se despierta de nuevo al resolver el gate o por cron" .-> C0
+    C0 -- No --> D["Gatekeeper: monolith-deploy-queue.yml<br/>(workflow_dispatch + schedule cada 5min)<br/>¿hay gate abierto de un despliegue anterior?"]
+    D -- "gate:pending / gate:paused" --> D1["Run del gatekeeper deja claro<br/>quién bloquea (issue, label, asignado)"]
+    D1 -. "se despierta de nuevo al resolver el gate o por cron" .-> D
+    D -- "gate:ok o sin gate activo" --> E{"Gatekeeper mergea la siguiente<br/>de la cola (hotfix primero, luego automerge)"}
+    E -- "Merge OK" --> F["release-and-deploy.yml<br/>(push a master)"]
+    E -- "Merge falla" --> E1["Abre issue 'queue:blocked'<br/>y falla el job — no intenta la siguiente PR"]
+    E1 --> E2["Humanos se coordinan:<br/>alguien mergea a mano lo que esté listo<br/>y cierra el issue"]
+    E2 -.-> C0
     F --> G["Despliegue al monolito"]
     G --> H["Abrir Issue de gate<br/>estado = gate:pending<br/>asignado al elegido"]
     H --> I["Slack: avisa al elegido<br/>'tu PR se está subiendo'"]
@@ -91,8 +107,8 @@ flowchart TD
 | Elemento | Decide / hace | No puede |
 |---|---|---|
 | GHA merge action existente | Mergear si pipeline verde + rebaseado | Saltarse el orden de la cola (salvo `hotfix`) |
-| Job `wait-for-validation-window` | Bloquear el siguiente merge mientras el gate esté `pending`/`paused` | Avanzar antes de `gate:ok` |
-| Bot de Slack | Notificar posición en cola, recoger OK/pausa/fallo del elegido, aplicar timeout según el modo configurado | Decidir por el elegido, forzar un merge o un despliegue |
+| Gatekeeper (`monolith-deploy-queue.yml`) | Decidir si se mergea la siguiente PR de la cola (`hotfix` con prioridad); aplicar el timeout por modo configurado sobre el gate `pending`; detener la rotación (issue `queue:blocked`) si un merge falla | Avanzar antes de `gate:ok`; decidir por el elegido; saltar a la siguiente PR si la actual falló al mergear |
+| Bot de Slack (nice-to-have) | Notificar posición en cola, recoger OK/pausa/fallo del elegido sin pasar por GitHub | Decidir por el elegido, forzar un merge o un despliegue |
 | El elegido (humano) | Confirmar OK, pausar, o señalar fallo de su propio despliegue | Saltarse la cola sin label `hotfix` |
 
 ## Futuro: análisis automático de métricas (LLM)
@@ -115,7 +131,7 @@ demo — para que cale el mensaje sin tener que explicar el sistema entero.
 | El autor del PR en su ventana de validación | **Neo / "el elegido"** | Es quien decide, no el sistema |
 | Confirmación OK → `gate:ok`, libera la cola | **Pastilla roja** | Ves la verdad, aceptas que todo va bien, el mundo real (producción) continúa |
 | Señal de fallo → `gate:stop` | **Pastilla azul** | Vuelves a la cama, pero el problema sigue ahí fuera hasta que alguien actúe a mano |
-| Label `hotfix` (salta la cola) | **"Operador, necesito una salida"** | La llamada urgente de extracción inmediata, sin esperar turno |
+| Label `hotfix` (salta al frente de la cola) | **"Operador, necesito una salida"** | La llamada urgente para ir primero, aunque sigues saliendo por la misma puerta (el gatekeeper, el gate sigue aplicando) |
 | Pausa del elegido → `gate:paused` | **Bullet time** | Todo se congela mientras tú decides |
 | Modo "prudente" (sin timeout automático a `ok`) | **"Sigue al conejo blanco"** | No hay red de seguridad que te salve, tienes que actuar |
 | Notificación de posición en cola | **"Despierta, Neo..."** | El mensaje de Morpheus avisando que se acerca tu turno |

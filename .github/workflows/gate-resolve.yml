@@ -6,6 +6,7 @@ on:
 
 permissions:
   issues: write
+  actions: write
 
 jobs:
   resolve-gate:
@@ -70,6 +71,7 @@ jobs:
             gate:ok)
               gh issue close "$ISSUE_NUMBER" --repo "$REPO" \
                 --comment "Pastilla roja. $COMMENTER confirma que todo va bien, la cola queda liberada."
+              gh workflow run monolith-deploy-queue.yml --repo "$REPO"
               ;;
             gate:stop)
               gh issue comment "$ISSUE_NUMBER" --repo "$REPO" \

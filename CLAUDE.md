@@ -49,13 +49,23 @@ presentación y la narrativa de la demo.
   Next.js. Deploy a GH Pages (`actions/deploy-pages` o
   `peaceiris/actions-gh-pages`).
 - **Workflows GHA** (mirror simplificado del monolito real
-  `all-ij--web-empleo`): `pr-rebase.yml`, `pr-merge.yml` (cola global vía
-  `concurrency.group: "monolith-deploy-queue"`, incluye el job
-  `wait-for-validation-window`), `qa-pipeline.yml` (fallo aleatorio para
-  simular pipeline inestable), `release-and-deploy.yml` (deploy + apertura
-  de gate), `gate-resolve.yml` (traduce el comentario del elegido —
-  `ok`/`stop`/`pause` — al label del gate).
-- **Estado del gate:** GitHub Issues (no backend propio).
+  `all-ij--web-empleo`): `pr-rebase.yml` (labels `rebase`/`automerge`/`hotfix`,
+  o push a `main`), `pr-merge.yml` (ligero, vive en la PR: tanto `hotfix`
+  como `automerge` solo despiertan al gatekeeper — `hotfix` no mergea nada
+  por sí mismo, solo avisa con prioridad), `monolith-deploy-queue.yml` (el
+  **gatekeeper**: workflow independiente, no disparado por eventos de PR —
+  `workflow_dispatch` + `schedule` cada 5 min — decide si mergea la
+  siguiente PR de la cola, `hotfix` primero, según el estado del gate; si
+  está bloqueado lo deja explícito en el resumen del run, no en el check de
+  cada PR; si un merge falla, abre un issue `queue:blocked` y falla el job
+  sin intentar la siguiente PR — requiere intervención manual), `qa-pipeline.yml`
+  (fallo aleatorio para simular pipeline inestable), `release-and-deploy.yml`
+  (deploy + apertura de gate), `gate-resolve.yml` (traduce el comentario del
+  elegido — `ok`/`stop`/`pause` — al label del gate, y despierta al
+  gatekeeper al resolver a `gate:ok`).
+- **Estado del gate:** GitHub Issues (no backend propio). También se usa un
+  Issue con label `queue:blocked` para parar la rotación automática del
+  gatekeeper cuando un merge falla, hasta que un humano lo resuelva.
 - **Sin autenticación/autorización real** — es una demo, estado y permisos
   simplificados a propósito.
 
@@ -65,7 +75,7 @@ presentación y la narrativa de la demo.
 2. `qa-pipeline.yml` con fallo aleatorio + branch protection.
 3. `pr-rebase.yml` + `pr-merge.yml` con cola global + label `hotfix`.
 4. `release-and-deploy.yml` + apertura de Issue-gate.
-5. Job `wait-for-validation-window` (resolución manual vía Issue + timeout por modo).
+5. Gatekeeper `monolith-deploy-queue.yml` (resolución manual vía Issue + timeout por modo).
 6. (Nice-to-have) Bot de Slack.
 7. (Futuro, fuera del MVP) Paso LLM de métricas.
 
