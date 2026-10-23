@@ -75,10 +75,9 @@ Replican la estructura real vista en `all-ij--web-empleo`, pero simplificados:
 | Workflow demo | Equivalente en el monolito | Rol |
 |---|---|---|
 | `pr-rebase.yml` | `pr-rebase.yml` | Rebase manual bajo demanda: labels `rebase` / `automerge` / `hotfix`, o automático en cada `push` a `main` |
-| `pr-merge.yml` | `pr-merge.yml` | Ligero, vive en la propia PR: tanto `hotfix` como `automerge` solo despiertan al gatekeeper (`gh workflow run`) — termina rápido, la PR queda en verde. `hotfix` no mergea nada por sí mismo, solo avisa con prioridad |
-| `monolith-deploy-queue.yml` | — (nuevo, es el *gatekeeper*) | Workflow independiente, no disparado por eventos de ninguna PR. Si hay un issue `queue:blocked` abierto (parada manual tras un fallo), no hace nada. Si no, comprueba el gate y, si está libre, mergea la siguiente PR de la cola (`hotfix` primero, luego `automerge`, FIFO por número). Si el merge falla, abre un issue `queue:blocked` y falla el job — no sigue con la siguiente PR, queda detenido hasta que un humano lo resuelva y cierre el issue. Si está bloqueado, lo deja explícito en el resumen del run — ahí se ve quién tiene la cola parada, no en el checklist de cada PR |
+| `pr-merge.yml` | `pr-merge.yml` | Ligero, vive en la propia PR: tanto `hotfix` como `automerge` solo despiertan al gatekeeper (`gh workflow run release-and-deploy.yml`) — termina rápido, la PR queda en verde. `hotfix` no mergea nada por sí mismo, solo avisa con prioridad |
 | `qa-pipeline.yml` | `qa-pipeline.yml` | Tests con fallo aleatorio (p. ej. `Math.random() < 0.15` fuerza un test rojo) — simula pipeline inestable, bloquea merge vía required status check |
-| `release-and-deploy.yml` | `release-and-deploy.yml` | Build + deploy a GH Pages + genera `metrics.json` sintético + abre el gate |
+| `release-and-deploy.yml` | `release-and-deploy.yml` | Doble función según cómo se dispare. Por `push` a `main`: build + deploy a GH Pages + abre el gate. Por `workflow_dispatch` (despertado por `pr-merge.yml` al encolar o por `gate-resolve.yml` al resolver `gate:ok`): job `gatekeeper` — si hay un issue `queue:blocked` abierto no hace nada; si no, comprueba el gate y, si está libre, mergea la siguiente PR de la cola (`hotfix` primero, luego `automerge`, FIFO por número), lo que a su vez dispara un nuevo `push` y por tanto un nuevo build+deploy+gate. Sin cron: el timeout por modo solo se evalúa cuando algo despierta este job, no en un intervalo fijo. Si el merge falla, abre un issue `queue:blocked` y falla el job — no sigue con la siguiente PR, queda detenido hasta que un humano lo resuelva y cierre el issue. Si está bloqueado, lo deja explícito en el resumen del run — ahí se ve quién tiene la cola parada, no en el checklist de cada PR |
 | `gate-resolve.yml` | — (nuevo) | Traduce el comentario del elegido (`ok`/`stop`/`pause`) en el Issue-gate al label correspondiente; al resolver a `gate:ok` despierta al gatekeeper inmediatamente |
 
 ## Simulación de fallos
@@ -98,13 +97,15 @@ archivo generado por la demo.)
   `gate:ok` / `gate:stop` / `gate:paused`. Se crea al completar el deploy,
   asignado al elegido (autor del PR), se cierra al resolver la ventana.
 - **Cola:** no vive en la propia PR ni en un job que la bloquea — la decide
-  un workflow aparte, `monolith-deploy-queue.yml` (el "gatekeeper"), no
-  disparado por eventos de PR (`workflow_dispatch` + `schedule` cada 5 min
-  de red de seguridad + despertado explícito al resolver un gate). Así la PR
-  en cola se ve con sus propios checks en verde, y si el sistema está
-  bloqueado, se ve claramente en el resumen del último run del gatekeeper
-  (qué gate, qué label, quién es el asignado) en vez de en cada PR esperando.
-- **Gatekeeper (`monolith-deploy-queue.yml`):** en cada ejecución, primero
+  el job `gatekeeper` de `release-and-deploy.yml`, disparado solo por
+  `workflow_dispatch` explícito (al encolar una PR o al resolver un gate),
+  nunca por eventos de PR. No hay `schedule`/cron: el timeout por modo es
+  una aproximación que solo se recalcula cuando algo despierta este job.
+  Así la PR en cola se ve con sus propios checks en verde, y si el sistema
+  está bloqueado, se ve claramente en el resumen del último run del
+  gatekeeper (qué gate, qué label, quién es el asignado) en vez de en cada
+  PR esperando.
+- **Gatekeeper (job `gatekeeper` en `release-and-deploy.yml`):** en cada ejecución, primero
   comprueba si hay un issue `queue:blocked` abierto (parada manual tras un
   fallo de merge) — si lo hay, no hace nada hasta que un humano lo cierre.
   Si no, comprueba si hay un gate abierto distinto de `gate:ok`; si lo hay,
@@ -114,11 +115,11 @@ archivo generado por la demo.)
   selección, no bypassa el gate ni mergea fuera del gatekeeper.
 - **Parada dura ante fallo de merge:** si el intento de merge falla (p. ej.
   conflictos), el gatekeeper abre un issue `queue:blocked` y falla el job
-  explícitamente. Ninguna ejecución futura (ni el cron ni un `workflow_dispatch`)
-  evalúa ni mergea nada mientras ese issue esté abierto — no hay fallback
-  automático a intentar la siguiente PR de la cola. Se coordinan los humanos:
-  alguien mergea a mano la PR que esté lista y cierra el issue para reanudar
-  la rotación automática.
+  explícitamente. Ninguna ejecución futura del job (siempre vía
+  `workflow_dispatch`) evalúa ni mergea nada mientras ese issue esté
+  abierto — no hay fallback automático a intentar la siguiente PR de la
+  cola. Se coordinan los humanos: alguien mergea a mano la PR que esté
+  lista y cierra el issue para reanudar la rotación automática.
 - **Resolución:** la hace el elegido, comentando/etiquetando el Issue (o,
   si existe el bot, respondiendo en Slack):
   - OK → `gate:ok`, libera la cola.
@@ -128,8 +129,8 @@ archivo generado por la demo.)
     en el monolito — no se dispara ningún revert automático (ver "Fuera de
     alcance"). Deja la cola bloqueada hasta resolución manual (cerrar el
     Issue a mano).
-- **Timeout configurable por modo** (input del `workflow_dispatch`, o
-  variable de repo):
+- **Timeout configurable por modo** (variables de repo `GATE_TIMEOUT_MINUTES` /
+  `GATE_TIMEOUT_MODE`):
   - `default-ok`: sin respuesta en N minutos → `gate:ok` automático.
   - `prudente`: sin respuesta en N minutos → se queda bloqueado (no pasa a
     `ok` solo); requiere intervención manual explícita.
@@ -138,9 +139,9 @@ archivo generado por la demo.)
 
 1. App React/Vite mínima + deploy manual a GH Pages (validar el pipeline base).
 2. `qa-pipeline.yml` con test de fallo aleatorio + branch protection.
-3. `pr-rebase.yml` + `pr-merge.yml` con label `hotfix` (bypass) y label `automerge` (encola).
-4. `release-and-deploy.yml` + apertura de Issue-gate asignado al elegido.
-5. `monolith-deploy-queue.yml` (gatekeeper, fuera de la PR) + `gate-resolve.yml`: resolución manual vía Issue (OK/pausa/fallo) + timeout por modo (`default-ok`/`prudente`).
+3. `pr-rebase.yml` + `pr-merge.yml` con label `hotfix` (prioridad en cola) y label `automerge` (encola) — ambos solo despiertan al gatekeeper.
+4. `release-and-deploy.yml`: build + deploy + apertura de Issue-gate asignado al elegido (disparado por `push` a `main`).
+5. Job `gatekeeper` en `release-and-deploy.yml` (disparado por `workflow_dispatch`, fuera de la PR) + `gate-resolve.yml`: resolución manual vía Issue (OK/pausa/fallo) + timeout por modo (`default-ok`/`prudente`).
 6. (Nice-to-have) Bot de Slack: notificaciones proactivas de posición en cola + recoger OK/pausa/fallo sin pasar por GitHub.
 7. (Futuro, fuera del MVP) Step LLM leyendo métricas y escribiendo `gate:stop` como freno adicional.
 

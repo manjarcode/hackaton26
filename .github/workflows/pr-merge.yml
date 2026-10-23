@@ -22,8 +22,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           echo "Operador, necesito una salida: PR #$PR_NUMBER pasa al frente de la cola."
-          echo "Sigue pasando por el gatekeeper (monolith-deploy-queue.yml) y respeta el gate — solo tiene prioridad sobre las automerge, no bypass total."
-          gh workflow run monolith-deploy-queue.yml --repo "$REPO"
+          echo "Sigue pasando por el gatekeeper (release-and-deploy.yml) y respeta el gate — solo tiene prioridad sobre las automerge, no bypass total."
+          gh workflow run release-and-deploy.yml --repo "$REPO"
 
   enqueue:
     name: Encolar para la subida
@@ -37,5 +37,5 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           echo "PR #$PR_NUMBER encolada para la subida al monolito."
-          echo "El gatekeeper (monolith-deploy-queue.yml) decide cuándo mergearla — esta PR no espera activamente."
-          gh workflow run monolith-deploy-queue.yml --repo "$REPO"
+          echo "El gatekeeper (release-and-deploy.yml) decide cuándo mergearla — esta PR no espera activamente."
+          gh workflow run release-and-deploy.yml --repo "$REPO"

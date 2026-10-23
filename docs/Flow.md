@@ -11,15 +11,18 @@ comunicación, no la decisión.
 
 ## Componentes
 
-- **Gatekeeper (`monolith-deploy-queue.yml`)**: workflow aparte, no disparado
-  por eventos de ninguna PR — se despierta por `workflow_dispatch` (cuando
-  se encola una PR o se resuelve un gate) y por `schedule` cada 5 min como
-  red de seguridad. Decide si se puede mergear la siguiente PR de la cola
-  (`hotfix` primero, luego `automerge`, FIFO por número) o si hay que
-  esperar. Al vivir fuera de la PR, esta nunca se queda con un check "en
-  curso" raro — y si el sistema está bloqueado, se ve con claridad en el
-  resumen del último run del gatekeeper (qué gate, qué label, quién es el
-  asignado), en vez de en cada PR en cola.
+- **Gatekeeper (job `gatekeeper` dentro de `release-and-deploy.yml`)**: no
+  disparado por eventos de ninguna PR — se despierta solo por
+  `workflow_dispatch` explícito (cuando se encola una PR o se resuelve un
+  gate). Sin `schedule`/cron: el timeout por modo es una aproximación que
+  solo se recalcula cuando algo lo despierta. Decide si se puede mergear la
+  siguiente PR de la cola (`hotfix` primero, luego `automerge`, FIFO por
+  número) o si hay que esperar; si mergea, ese mismo `push` a `main`
+  dispara los jobs de build+deploy+open-gate del propio workflow. Al vivir
+  fuera de la PR, esta nunca se queda con un check "en curso" raro — y si
+  el sistema está bloqueado, se ve con claridad en el resumen del último
+  run del gatekeeper (qué gate, qué label, quién es el asignado), en vez de
+  en cada PR en cola.
 - **Gate de validación**: lo que el gatekeeper consulta antes de mergear —
   si el gate del despliegue anterior no está en `gate:ok`, no deja avanzar
   nada.
@@ -62,19 +65,19 @@ El elegido puede, en cualquier momento de su ventana:
 
 ```mermaid
 flowchart TD
-    A["Usuario activa label 'automerge' o 'hotfix'<br/>(hotfix = prioridad en la cola, no bypass)"] --> B1["pr-merge.yml: solo despierta<br/>al gatekeeper (gh workflow run)<br/>— termina ya, PR en verde"]
+    A["Usuario activa label 'automerge' o 'hotfix'<br/>(hotfix = prioridad en la cola, no bypass)"] --> B1["pr-merge.yml: solo despierta<br/>al gatekeeper (gh workflow run release-and-deploy.yml)<br/>— termina ya, PR en verde"]
     B1 --> C0{"¿Hay issue 'queue:blocked' abierto?"}
     C0 -- Sí --> C1["Gatekeeper no hace nada<br/>hasta que un humano lo cierre"]
-    C1 -. "se despierta de nuevo al resolver el gate o por cron" .-> C0
-    C0 -- No --> D["Gatekeeper: monolith-deploy-queue.yml<br/>(workflow_dispatch + schedule cada 5min)<br/>¿hay gate abierto de un despliegue anterior?"]
+    C1 -. "se despierta de nuevo al resolver el gate o al encolar otra PR" .-> C0
+    C0 -- No --> D["Job 'gatekeeper' en release-and-deploy.yml<br/>(solo workflow_dispatch, sin cron)<br/>¿hay gate abierto de un despliegue anterior?"]
     D -- "gate:pending / gate:paused" --> D1["Run del gatekeeper deja claro<br/>quién bloquea (issue, label, asignado)"]
-    D1 -. "se despierta de nuevo al resolver el gate o por cron" .-> D
+    D1 -. "se despierta de nuevo al resolver el gate o al encolar otra PR" .-> D
     D -- "gate:ok o sin gate activo" --> E{"Gatekeeper mergea la siguiente<br/>de la cola (hotfix primero, luego automerge)"}
-    E -- "Merge OK" --> F["release-and-deploy.yml<br/>(push a master)"]
+    E -- "Merge OK" --> F["Ese mismo merge dispara<br/>un push a main"]
     E -- "Merge falla" --> E1["Abre issue 'queue:blocked'<br/>y falla el job — no intenta la siguiente PR"]
     E1 --> E2["Humanos se coordinan:<br/>alguien mergea a mano lo que esté listo<br/>y cierra el issue"]
     E2 -.-> C0
-    F --> G["Despliegue al monolito"]
+    F --> G["release-and-deploy.yml (jobs build+deploy):<br/>despliegue al monolito"]
     G --> H["Abrir Issue de gate<br/>estado = gate:pending<br/>asignado al elegido"]
     H --> I["Slack: avisa al elegido<br/>'tu PR se está subiendo'"]
     I --> J["Ventana de validación: X min<br/>(modo default-ok / modo prudente)"]
@@ -87,7 +90,7 @@ flowchart TD
     K -- "Pide pausa" --> M2["gate = gate:paused<br/>cola detenida"]
 
     L --> N["Gate liberado<br/>Slack notifica al siguiente de la cola"]
-    N --> B
+    N --> B1
 
     M --> O["Slack: alerta de fallo<br/>requiere revert manual en el monolito"]
     O --> Q["Cola bloqueada hasta resolución manual"]
@@ -107,7 +110,7 @@ flowchart TD
 | Elemento | Decide / hace | No puede |
 |---|---|---|
 | GHA merge action existente | Mergear si pipeline verde + rebaseado | Saltarse el orden de la cola (salvo `hotfix`) |
-| Gatekeeper (`monolith-deploy-queue.yml`) | Decidir si se mergea la siguiente PR de la cola (`hotfix` con prioridad); aplicar el timeout por modo configurado sobre el gate `pending`; detener la rotación (issue `queue:blocked`) si un merge falla | Avanzar antes de `gate:ok`; decidir por el elegido; saltar a la siguiente PR si la actual falló al mergear |
+| Gatekeeper (job `gatekeeper` en `release-and-deploy.yml`) | Decidir si se mergea la siguiente PR de la cola (`hotfix` con prioridad); aplicar el timeout por modo configurado sobre el gate `pending`; detener la rotación (issue `queue:blocked`) si un merge falla | Avanzar antes de `gate:ok`; decidir por el elegido; saltar a la siguiente PR si la actual falló al mergear |
 | Bot de Slack (nice-to-have) | Notificar posición en cola, recoger OK/pausa/fallo del elegido sin pasar por GitHub | Decidir por el elegido, forzar un merge o un despliegue |
 | El elegido (humano) | Confirmar OK, pausar, o señalar fallo de su propio despliegue | Saltarse la cola sin label `hotfix` |
 
